@@ -86,11 +86,11 @@ static void print_info(const char *msg) {
  */
 static int test_support(void) {
     print_header("TEST 1: Hardware Support Detection");
-    
-    bool supported = truerng_is_supported();
+
+    bool supported = truernd_is_supported();
     printf("Hardware RNG supported: %s\n", 
            supported ? ANSI_GREEN "YES" ANSI_RESET : ANSI_RED "NO" ANSI_RESET);
-    
+
     if (!supported) {
         print_fail("Hardware RNG not supported on this system");
         printf(ANSI_DIM "  This system does not have:\n");
@@ -119,7 +119,7 @@ static int test_get32(void) {
     
     printf("Generating 10 random 32-bit numbers:\n");
     for (int i = 0; i < 10; i++) {
-        if (truerng_get32(&values[i])) {
+        if (truernd_get32(&values[i])) {
             printf(ANSI_DIM "  [%d]" ANSI_RESET " " ANSI_MAGENTA "0x%08X" ANSI_RESET 
                    " " ANSI_DIM "(%u)\n" ANSI_RESET, i, values[i], values[i]);
             success_count++;
@@ -144,13 +144,13 @@ static int test_get32(void) {
  */
 static int test_get64(void) {
     print_header("TEST 3: 64-bit Random Generation");
-    
+
     uint64_t values[10];
     int success_count = 0;
-    
+
     printf("Generating 10 random 64-bit numbers:\n");
     for (int i = 0; i < 10; i++) {
-        if (truerng_get64(&values[i])) {
+        if (truernd_get64(&values[i])) {
             printf(ANSI_DIM "  [%d]" ANSI_RESET " " ANSI_MAGENTA "0x%016llX" ANSI_RESET 
                    " " ANSI_DIM "(%llu)\n" ANSI_RESET,
                    i, (unsigned long long)values[i], (unsigned long long)values[i]);
@@ -159,7 +159,7 @@ static int test_get64(void) {
             printf(ANSI_RED "  [%d] FAILED to generate\n" ANSI_RESET, i);
         }
     }
-    
+
     if (success_count == 10) {
         print_pass("All 64-bit generations successful");
         return 1;
@@ -176,29 +176,28 @@ static int test_get64(void) {
  */
 static int test_fill(void) {
     print_header("TEST 4: Buffer Fill");
-    
+
     uint8_t buffer[BUFFER_SIZE];
     memset(buffer, 0, sizeof(buffer));
-    
+
     printf("Filling %d byte buffer with random data...\n", BUFFER_SIZE);
-    if (!truerng_fill(buffer, sizeof(buffer))) {
+    if (!truernd_fill(buffer, sizeof(buffer), false)) {
         print_fail("Failed to fill buffer");
         return 0;
     }
-    
+
     printf(ANSI_DIM "First 64 bytes (hex):\n" ANSI_RESET);
     for (int i = 0; i < 64; i++) {
         if (i > 0 && i % 16 == 0) printf("\n");
         printf(ANSI_MAGENTA "%02X " ANSI_RESET, buffer[i]);
     }
     printf("\n");
-    
-    // Check if buffer is not all zeros
+
     int non_zero = 0;
     for (int i = 0; i < BUFFER_SIZE; i++) {
         if (buffer[i] != 0) non_zero++;
     }
-    
+
     if (non_zero > BUFFER_SIZE / 2) {
         char msg[100];
         snprintf(msg, sizeof(msg), "Buffer filled with random data (%d/%d non-zero bytes)", 
@@ -219,21 +218,21 @@ static int test_fill(void) {
  */
 static int test_uniqueness(void) {
     print_header("TEST 5: Uniqueness Check");
-    
+
     uint64_t values[100];
     int duplicates = 0;
-    
+
     printf("Generating 100 random 64-bit numbers and checking for duplicates...\n");
-    
+
     for (int i = 0; i < 100; i++) {
-        if (!truerng_get64(&values[i])) {
+        if (!truernd_get64(&values[i])) {
             char msg[100];
             snprintf(msg, sizeof(msg), "Failed to generate value at index %d", i);
             print_fail(msg);
             return 0;
         }
     }
-    
+
     for (int i = 0; i < 100; i++) {
         for (int j = i + 1; j < 100; j++) {
             if (values[i] == values[j]) {
@@ -243,7 +242,7 @@ static int test_uniqueness(void) {
             }
         }
     }
-    
+
     if (duplicates == 0) {
         print_pass("All 100 values are unique");
         return 1;
@@ -251,7 +250,7 @@ static int test_uniqueness(void) {
         char msg[100];
         snprintf(msg, sizeof(msg), "Found %d duplicate(s) (may occur randomly)", duplicates);
         print_warning(msg);
-        return duplicates <= 1 ? 1 : 0; // Allow 1 duplicate
+        return duplicates <= 1 ? 1 : 0;
     }
 }
 
@@ -260,17 +259,16 @@ static int test_uniqueness(void) {
  */
 static int test_performance(void) {
     print_header("TEST 6: Performance Test");
-    
+
     clock_t start, end;
     double cpu_time;
-    
-    // Test 32-bit performance
+
     printf("Generating %s%d%s random 32-bit numbers...\n", 
            ANSI_CYAN, TEST_ITERATIONS, ANSI_RESET);
     start = clock();
     for (int i = 0; i < TEST_ITERATIONS; i++) {
         uint32_t val;
-        if (!truerng_get32(&val)) {
+        if (!truernd_get32(&val)) {
             char msg[100];
             snprintf(msg, sizeof(msg), "Generation failed at iteration %d", i);
             print_fail(msg);
@@ -282,14 +280,13 @@ static int test_performance(void) {
     printf(ANSI_DIM "  Time: " ANSI_RESET ANSI_GREEN "%.4f seconds\n" ANSI_RESET, cpu_time);
     printf(ANSI_DIM "  Rate: " ANSI_RESET ANSI_GREEN "%.0f numbers/second\n" ANSI_RESET, 
            TEST_ITERATIONS / cpu_time);
-    
-    // Test 64-bit performance
+
     printf("\nGenerating %s%d%s random 64-bit numbers...\n", 
            ANSI_CYAN, TEST_ITERATIONS, ANSI_RESET);
     start = clock();
     for (int i = 0; i < TEST_ITERATIONS; i++) {
         uint64_t val;
-        if (!truerng_get64(&val)) {
+        if (!truernd_get64(&val)) {
             char msg[100];
             snprintf(msg, sizeof(msg), "Generation failed at iteration %d", i);
             print_fail(msg);
@@ -311,26 +308,26 @@ static int test_performance(void) {
  */
 static int test_error_handling(void) {
     print_header("TEST 7: Error Handling");
-    
+
     printf("Testing NULL pointer handling...\n");
-    
-    bool result32 = truerng_get32(NULL);
+
+    bool result32 = truernd_get32(NULL);
     printf("  truerng_get32(NULL): %s\n", 
            result32 ? ANSI_RED "FAIL" ANSI_RESET : ANSI_GREEN "PASS" ANSI_RESET);
-    
-    bool result64 = truerng_get64(NULL);
+
+    bool result64 = truernd_get64(NULL);
     printf("  truerng_get64(NULL): %s\n", 
            result64 ? ANSI_RED "FAIL" ANSI_RESET : ANSI_GREEN "PASS" ANSI_RESET);
-    
-    bool result_fill = truerng_fill(NULL, 100);
-    printf("  truerng_fill(NULL, 100): %s\n", 
+
+    bool result_fill = truernd_fill(NULL, 100, false);
+    printf("  truerng_fill(NULL, 100, false): %s\n", 
            result_fill ? ANSI_RED "FAIL" ANSI_RESET : ANSI_GREEN "PASS" ANSI_RESET);
-    
+
     uint8_t buf[10];
-    bool result_fill_zero = truerng_fill(buf, 0);
-    printf("  truerng_fill(buf, 0): %s\n", 
+    bool result_fill_zero = truernd_fill(buf, 0, false);
+    printf("  truerng_fill(buf, 0, false): %s\n", 
            result_fill_zero ? ANSI_RED "FAIL" ANSI_RESET : ANSI_GREEN "PASS" ANSI_RESET);
-    
+
     if (!result32 && !result64 && !result_fill && !result_fill_zero) {
         print_pass("All error cases handled correctly");
         return 1;
@@ -346,13 +343,13 @@ static int test_error_handling(void) {
 int main(void) {
     int total_tests = 0;
     int passed_tests = 0;
-    
+
     printf("\n");
     print_thick_separator();
     printf(ANSI_BOLD ANSI_CYAN "       TRUERANDOM.H - TEST SUITE       \n" ANSI_RESET);
     print_thick_separator();
     printf("\n");
-    
+
     printf(ANSI_BOLD "Architecture: " ANSI_RESET);
     #if defined(TRUERNG_ARCH_X86)
         #if defined(__x86_64__) || defined(_M_X64)
@@ -369,11 +366,10 @@ int main(void) {
     #else
     printf(ANSI_RED "Unknown/Unsupported\n" ANSI_RESET);
     #endif
-    
-    // Run all tests
+
     total_tests++; passed_tests += test_support();
-    
-    if (!truerng_is_supported()) {
+
+    if (!truernd_is_supported()) {
         printf("\n");
         print_thick_separator();
         printf(ANSI_RED ANSI_BOLD "Cannot continue testing without hardware support\n" ANSI_RESET);
@@ -381,15 +377,14 @@ int main(void) {
         printf("\n");
         return 1;
     }
-    
+
     total_tests++; passed_tests += test_get32();
     total_tests++; passed_tests += test_get64();
     total_tests++; passed_tests += test_fill();
     total_tests++; passed_tests += test_uniqueness();
     total_tests++; passed_tests += test_performance();
     total_tests++; passed_tests += test_error_handling();
-    
-    // Print summary
+
     printf("\n");
     print_thick_separator();
     printf(ANSI_BOLD ANSI_CYAN "TEST SUMMARY\n" ANSI_RESET);
@@ -405,7 +400,7 @@ int main(void) {
            passed_tests == total_tests ? ANSI_GREEN : ANSI_YELLOW,
            (100.0 * passed_tests) / total_tests);
     print_thick_separator();
-    
+
     if (passed_tests == total_tests) {
         printf(ANSI_GREEN ANSI_BOLD SYMBOL_PASS " ALL TESTS PASSED!\n" ANSI_RESET);
         print_thick_separator();

@@ -1,29 +1,7 @@
 /*
  * @file truerandom.h
  * @brief True random number generator using hardware instructions (RDRAND for x86, RNDR for ARM)
- * @version 0.2
- * 
- * This is a single-header library that provides true random number generation
- * using CPU hardware random number generators.
- * 
- * The caller is responsible for checking return values and handling retries.
- * 
- * Usage:
- *   In ONE C file, define TRUERANDOM_IMPLEMENTATION before including:
- *   
- *   #define TRUERANDOM_IMPLEMENTATION
- *   #include "truerandom.h"
- *   
- *   In other files, just include normally:
- *   #include "truerandom.h"
- *   
- *   Then use the API:
- *   uint64_t random_val;
- *   if (truerng_get64(&random_val)) {
- *       // Use random_val
- *   } else {
- *       // Handle failure or retry
- *   }
+ * @version 0.0.2
  */
 
 #ifndef TRUERANDOM_H
@@ -37,6 +15,22 @@
 extern "C" {
 #endif
 
+/*
+ * User Configurations
+ */
+
+#ifndef TRUERND_MAX_RETRIES
+#define TRUERND_MAX_RETRIES 10
+#endif
+
+/*
+ * End User Configurations
+ */
+
+
+
+
+
 /* Naked function attribute */
 #if defined(_MSC_VER)
     #define NAKED __declspec(naked)
@@ -46,47 +40,68 @@ extern "C" {
 
 /* Architecture detection */
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    #define TRUERNG_ARCH_X86 1
+    #define truernd_ARCH_X86 1
 #elif defined(__aarch64__) || defined(_M_ARM64) || defined(__arm__) || defined(_M_ARM)
-    #define TRUERNG_ARCH_ARM 1
+    #define truernd_ARCH_ARM 1
 #else
-    #define TRUERNG_ARCH_UNKNOWN 1
+    #define truernd_ARCH_UNKNOWN 1
     #error "Unsupported architecture"
 #endif
 
-/*
- * PUBLIC API - DECLARATIONS
+/** \addtogroup PUBLIC API
+ *  @{
  */
 
 /**
  * @brief Check if hardware random number generation is supported
  * @return true if supported, false otherwise
  */
-bool truerng_is_supported(void);
+bool 
+truernd_is_supported(void);
+
 
 /**
  * @brief Generate a 32-bit true random number (single attempt)
- * @param out Pointer to store the random number
- * @return true on success, false on failure (caller should retry)
+ * @return The random value
  */
-bool truerng_get32(uint32_t *out);
+NAKED uint32_t 
+truernd_gen32(void);
 
 /**
  * @brief Generate a 64-bit true random number (single attempt)
- * @param out Pointer to store the random number
- * @return true on success, false on failure (caller should retry)
+ * @return The random value
  */
-bool truerng_get64(uint64_t *out);
+NAKED uint64_t 
+truernd_gen64(void);
+
+/**
+ * @brief Generate a 32-bit true random number (single attempt)
+ * @param[out] out Pointer to store the random number
+ * @return 0 on success, -1 on failure (caller should retry)
+ */
+NAKED int 
+truernd_get32(uint32_t *out);
+
+/**
+ * @brief Generate a 64-bit true random number (single attempt)
+ * @param[out] out Pointer to store the random number
+ * @return 0 on success, -1 on failure (caller should retry)
+ */
+NAKED int 
+truernd_get64(uint64_t *out);
 
 /**
  * @brief Fill a buffer with random bytes
  * @param buf Buffer to fill
  * @param len Length of buffer in bytes
- * @return true on success, false on failure (caller should retry)
- * @note This function makes multiple calls to truerng_get64. If any call fails,
+ * @return 0 on success, -1 on failure (caller should retry)
+ * @note This function makes multiple calls to truernd_get64. If any call fails,
  *       the function returns false immediately. The buffer may be partially filled.
  */
-bool truerng_fill(void *buf, size_t len);
+int 
+truernd_fill(void *buf, size_t len, bool is_32);
+
+/** @}*/
 
 #ifdef __cplusplus
 }
@@ -105,169 +120,297 @@ extern "C" {
 #endif
 
 /* Intel/AMD x86/x64 implementation using RDRAND */
-#if defined(TRUERNG_ARCH_X86)
+#if defined(truernd_ARCH_X86)
 
 #include <cpuid.h>
 
-static bool truerng_has_rdrand(void) {
-    uint32_t eax, ebx, ecx, edx;
-    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+bool 
+truernd_is_supported(void) {
+    uint32_t __eax, __ebx, __ecx, __edx;
+    if (!__get_cpuid(1, &__eax, &__ebx, &__ecx, &__edx)) {
         return false;
     }
-    return (ecx & (1 << 30)) != 0; /* RDRAND is bit 30 of ECX */
+    return (__ecx & (1 << 30)) != 0;
 }
 
-bool truerng_is_supported(void) {
-    return truerng_has_rdrand();
-}
-
-bool truerng_get32(uint32_t *out) {
-    if (!out) return false;
-    
-    unsigned char ok;
+/* 
+ * Generates a 32-bit random number.
+ * Returns: The number on success, or 0 on failure.
+ */
+NAKED uint32_t 
+truernd_gen32(void) {
     __asm__ volatile(
-        "rdrand %0; setc %1"
-        : "=r" (*out), "=qm" (ok)
-        :
-        : "cc"
+        "rdrand %eax       \n\t" // Generate 32-bit random into EAX
+        "jnc    1f         \n\t" // If Carry Flag=0 (Fail), jump to label 1
+        "ret               \n\t" // Return (Result is in EAX)
+
+        "1:                \n\t" // Failure path
+        "xor    %eax, %eax \n\t" // Zero out EAX
+        "ret               \n\t"
     );
-    return ok != 0;
 }
 
-bool truerng_get64(uint64_t *out) {
-    if (!out) return false;
-    
-#if defined(__x86_64__) || defined(_M_X64)
-    unsigned char ok;
+/* 
+ * Generates a 64-bit random number.
+ * Note: On x64, we use a single 64-bit rdrand instead of two 32-bit ones.
+ * Returns: The number on success, or 0 on failure.
+ */
+NAKED  uint64_t 
+truernd_gen64(void) {
     __asm__ volatile(
-        "rdrand %0; setc %1"
-        : "=r" (*out), "=qm" (ok)
-        :
-        : "cc"
+        "rdrand %rax       \n\t" // Generate 64-bit random into RAX
+        "jnc    1f         \n\t" // If Fail, jump to label 1
+        "ret               \n\t" // Return (Result is in RAX)
+
+        "1:                \n\t" // Failure path
+        "xor    %rax, %rax \n\t" // Zero out RAX
+        "ret               \n\t"
     );
-    return ok != 0;
-#else
-    /* 32-bit x86: generate two 32-bit values */
-    uint32_t low, high;
-    if (!truerng_get32(&low)) return false;
-    if (!truerng_get32(&high)) return false;
-    *out = ((uint64_t)high << 32) | low;
-    return true;
-#endif
+}
+
+/*
+ * Fills a pointer with a 32-bit random number.
+ * Args: out (RDI)
+ * Returns: 1 (Success), 0 (HW Fail), -1 (Null Ptr)
+ */
+NAKED int 
+truernd_get32(uint32_t *out) {
+    __asm__ volatile(
+        // Check if pointer (RDI) is NULL
+        "test   %rdi, %rdi \n\t"
+        "jz     2f         \n\t" // Jump to NULL handler
+
+        // Generate Random
+        "rdrand %ecx       \n\t" // Use ECX as temp
+        "jnc    1f         \n\t" // Jump to HW Fail
+
+        // Success Path
+        "movl   %ecx, (%rdi)\n\t" // Store result to memory at [RDI]
+        "mov    $1, %eax   \n\t"  // Return 1
+        "ret               \n\t"
+
+        // HW Fail Path
+        "1:                \n\t"
+        "xor    %eax, %eax \n\t"  // Return 0
+        "ret               \n\t"
+
+        // Null Pointer Path
+        "2:                \n\t"
+        "mov    $-1, %eax  \n\t"  // Return -1
+        "ret               \n\t"
+    );
+}
+
+/*
+ * Fills a pointer with a 64-bit random number.
+ * Args: out (RDI)
+ * Returns: 1 (Success), 0 (HW Fail), -1 (Null Ptr)
+ */
+NAKED int 
+truernd_get64(uint64_t *out) {
+    __asm__ volatile(
+        // Check if pointer (RDI) is NULL
+        "test   %rdi, %rdi \n\t"
+        "jz     2f         \n\t"
+
+        // Generate Random (64-bit)
+        "rdrand %rcx       \n\t" // Use RCX as temp
+        "jnc    1f         \n\t" 
+
+        // Success Path
+        "movq   %rcx, (%rdi)\n\t" // Store 64-bit result to memory
+        "mov    $1, %eax   \n\t"  // Return 1
+        "ret               \n\t"
+
+        // HW Fail Path
+        "1:                \n\t"
+        "xor    %eax, %eax \n\t"  // Return 0
+        "ret               \n\t"
+
+        // Null Pointer Path
+        "2:                \n\t"
+        "mov    $-1, %eax  \n\t"  // Return -1
+        "ret               \n\t"
+    );
 }
 
 /* ARM implementation using RNDR */
-#elif defined(TRUERNG_ARCH_ARM)
+#elif defined(truernd_ARCH_ARM)
 
-bool truerng_is_supported(void) {
 #if defined(__aarch64__) || defined(_M_ARM64)
-    /* Check if RNDR is available by reading ID_AA64ISAR0_EL1
-     * On ARMv8.5-A+, RNDR is available if ID_AA64ISAR0_EL1.RNDR != 0 */
-    uint64_t val;
+
+NAKED bool 
+truernd_is_supported(void) {
     __asm__ volatile(
-        "mrs %0, ID_AA64ISAR0_EL1"
-        : "=r" (val)
+        "mrs x0, ID_AA64ISAR0_EL1 \n\t"  // Read System Register
+        "lsr x0, x0, #60          \n\t"  // Shift right by 60 bits
+        "and x0, x0, #0xF         \n\t"  // Mask last 4 bits (RNDR field)
+        "ret                      \n\t"
     );
-    return ((val >> 60) & 0xF) != 0; /* RNDR field is bits 63:60 */
-#else
-    return false; /* 32-bit ARM typically doesn't have RNDR */
-#endif
 }
 
-bool truerng_get32(uint32_t *out) {
-    if (!out) return false;
-    
-#if defined(__aarch64__) || defined(_M_ARM64)
-    uint64_t val;
-    uint64_t ok;
+NAKED int 
+truernd_get32(uint32_t *out) {
     __asm__ volatile(
-        "mrs %0, RNDR\n\t"
-        "cset %1, ne"
-        : "=r" (val), "=r" (ok)
-        :
-        : "cc"
+        // x0 = out pointer (first argument)
+        "cbz x0, 1f               \n\t"  // if (out == NULL) goto fail
+
+        "mrs x1, RNDR             \n\t"  // Read random number
+        "b.eq 1f                  \n\t"  // if (NZCV.Z set) goto fail
+
+        "str w1, [x0]             \n\t"  // *out = (uint32_t)val
+        "mov w0, #1               \n\t"  // return true
+        "ret                      \n\t"
+
+    "1:                           \n\t"  // fail:
+        "mov w0, #0               \n\t"  // return false
+        "ret                      \n\t"
     );
-    if (ok) {
-        *out = (uint32_t)val;
-        return true;
-    }
-#endif
-    return false;
 }
 
-bool truerng_get64(uint64_t *out) {
-    if (!out) return false;
-    
-#if defined(__aarch64__) || defined(_M_ARM64)
-    uint64_t val;
-    uint64_t ok;
+NAKED int 
+truernd_get64(uint64_t *out) {
     __asm__ volatile(
-        "mrs %0, RNDR\n\t"
-        "cset %1, ne"
-        : "=r" (val), "=r" (ok)
-        :
-        : "cc"
+        // x0 = out pointer (first argument)
+        "cbz x0, 1f               \n\t"  // if (out == NULL) goto fail
+
+        "mrs x1, RNDR             \n\t"  // Read random number
+        "b.eq 1f                  \n\t"  // if (NZCV.Z set) goto fail
+
+        "str x1, [x0]             \n\t"  // *out = val
+        "mov w0, #1               \n\t"  // return true
+        "ret                      \n\t"
+
+    "1:                           \n\t"  // fail:
+        "mov w0, #0               \n\t"  // return false
+        "ret                      \n\t"
     );
-    if (ok) {
-        *out = val;
-        return true;
-    }
-    return false;
-#else
-    /* 32-bit ARM: generate two 32-bit values */
-    uint32_t low, high;
-    if (!truerng_get32(&low)) return false;
-    if (!truerng_get32(&high)) return false;
-    *out = ((uint64_t)high << 32) | low;
-    return true;
-#endif
 }
+
+NAKED uint32_t 
+truernd_gen32(void) {
+    __asm__ volatile(
+    "1:                           \n\t"  // retry:
+        "mrs x0, RNDR             \n\t"  // Read random into return register
+        "b.eq 1b                  \n\t"  // if failed, retry
+        "ret                      \n\t"  // return (uint32_t)x0 (w0)
+    );
+}
+
+NAKED uint64_t 
+truernd_gen64(void) {
+    __asm__ volatile(
+    "1:                           \n\t"  // retry:
+        "mrs x0, RNDR             \n\t"  // Read random into return register
+        "b.eq 1b                  \n\t"  // if failed, retry
+        "ret                      \n\t"  // return x0
+    );
+}
+
+#else /* 32-bit ARM - RNDR not available */
+
+NAKED bool 
+truernd_is_supported(void) {
+    __asm__ volatile(
+        "mov r0, #0               \n\t"  // Return 0 (not supported)
+        "bx lr                    \n\t"
+    );
+}
+
+NAKED int 
+truernd_get32(uint32_t *out) {
+    __asm__ volatile(
+        "mov r0, #0               \n\t"  // Return false
+        "bx lr                    \n\t"
+    );
+}
+
+NAKED int 
+truernd_get64(uint64_t *out) {
+    __asm__ volatile(
+        "mov r0, #0               \n\t"  // Return false
+        "bx lr                    \n\t"
+    );
+}
+
+NAKED uint32_t 
+truernd_gen32(void) {
+    __asm__ volatile(
+        "mov r0, #0               \n\t"  // Return 0 (unsupported)
+        "bx lr                    \n\t"
+    );
+}
+
+NAKED  uint64_t 
+truernd_gen64(void) {
+    __asm__ volatile(
+        "mov r0, #0               \n\t"  // Return 0 (unsupported)
+        "mov r1, #0               \n\t"  // High word for 64-bit return
+        "bx lr                    \n\t"
+    );
+}
+
+#endif /* __aarch64__ */
 
 /* Unsupported architecture */
 #else
 
-bool truerng_is_supported(void) {
+bool 
+truernd_is_supported(void) {
     return false;
 }
 
-bool truerng_get32(uint32_t *out) {
+bool 
+truernd_get32(uint32_t *out) {
     (void)out;
     return false;
 }
 
-bool truerng_get64(uint64_t *out) {
+bool 
+truernd_get64(uint64_t *out) {
     (void)out;
     return false;
+}
+
+uint32_t 
+truernd_gen32(void) {
+    return 0;
+}
+
+uint64_t 
+truernd_gen64(void) {
+    return 0;
 }
 
 #endif /* Architecture selection */
 
-/* Common implementation for truerng_fill */
-bool truerng_fill(void *buf, size_t len) {
-    if (!buf || len == 0) return false;
-    
+/* Common implementation for truernd_fill */
+int 
+truernd_fill(void *buf, size_t len, bool is_32) {
+    if (!buf || len == 0) return -1;
+
     uint8_t *ptr = (uint8_t *)buf;
-    
+
     /* Fill in 64-bit chunks */
     while (len >= 8) {
         uint64_t val;
-        if (!truerng_get64(&val)) return false;
+        if (!truernd_get64(&val)) return -1;
         for (int i = 0; i < 8; i++) {
             *ptr++ = (uint8_t)(val >> (i * 8));
         }
         len -= 8;
     }
-    
+
     /* Fill remaining bytes */
     if (len > 0) {
         uint64_t val;
-        if (!truerng_get64(&val)) return false;
+        if (!truernd_get64(&val)) return -1;
         for (size_t i = 0; i < len; i++) {
             *ptr++ = (uint8_t)(val >> (i * 8));
         }
     }
-    
-    return true;
+
+    return 0;
 }
 
 #ifdef __cplusplus
