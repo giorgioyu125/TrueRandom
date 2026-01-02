@@ -370,8 +370,6 @@ int main(void) {
     printf(ANSI_RED "Unknown/Unsupported\n" ANSI_RESET);
     #endif
     
-    printf(ANSI_BOLD "Max retries:  " ANSI_RESET ANSI_CYAN "%d\n" ANSI_RESET, TRUERNG_MAX_RETRIES);
-    
     // Run all tests
     total_tests++; passed_tests += test_support();
     

@@ -1,10 +1,12 @@
 /*
  * @file truerandom.h
  * @brief True random number generator using hardware instructions (RDRAND for x86, RNDR for ARM)
- * @version 0.1
+ * @version 0.2
  * 
  * This is a single-header library that provides true random number generation
  * using CPU hardware random number generators.
+ * 
+ * The caller is responsible for checking return values and handling retries.
  * 
  * Usage:
  *   In ONE C file, define TRUERANDOM_IMPLEMENTATION before including:
@@ -19,6 +21,8 @@
  *   uint64_t random_val;
  *   if (truerng_get64(&random_val)) {
  *       // Use random_val
+ *   } else {
+ *       // Handle failure or retry
  *   }
  */
 
@@ -33,6 +37,13 @@
 extern "C" {
 #endif
 
+/* Naked function attribute */
+#if defined(_MSC_VER)
+    #define NAKED __declspec(naked)
+#else
+    #define NAKED __attribute__((naked))
+#endif
+
 /* Architecture detection */
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
     #define TRUERNG_ARCH_X86 1
@@ -43,11 +54,6 @@ extern "C" {
     #error "Unsupported architecture"
 #endif
 
-/* Maximum retry attempts for random generation */
-#ifndef TRUERNG_MAX_RETRIES
-#define TRUERNG_MAX_RETRIES 10
-#endif
-
 /*
  * PUBLIC API - DECLARATIONS
  */
@@ -56,29 +62,31 @@ extern "C" {
  * @brief Check if hardware random number generation is supported
  * @return true if supported, false otherwise
  */
-extern bool truerng_is_supported(void);
+bool truerng_is_supported(void);
 
 /**
- * @brief Generate a 32-bit true random number
+ * @brief Generate a 32-bit true random number (single attempt)
  * @param out Pointer to store the random number
- * @return true on success, false on failure
+ * @return true on success, false on failure (caller should retry)
  */
-extern bool truerng_get32(uint32_t *out);
+bool truerng_get32(uint32_t *out);
 
 /**
- * @brief Generate a 64-bit true random number
+ * @brief Generate a 64-bit true random number (single attempt)
  * @param out Pointer to store the random number
- * @return true on success, false on failure
+ * @return true on success, false on failure (caller should retry)
  */
-extern bool truerng_get64(uint64_t *out);
+bool truerng_get64(uint64_t *out);
 
 /**
  * @brief Fill a buffer with random bytes
  * @param buf Buffer to fill
  * @param len Length of buffer in bytes
- * @return true on success, false on failure
+ * @return true on success, false on failure (caller should retry)
+ * @note This function makes multiple calls to truerng_get64. If any call fails,
+ *       the function returns false immediately. The buffer may be partially filled.
  */
-extern bool truerng_fill(void *buf, size_t len);
+bool truerng_fill(void *buf, size_t len);
 
 #ifdef __cplusplus
 }
@@ -109,41 +117,35 @@ static bool truerng_has_rdrand(void) {
     return (ecx & (1 << 30)) != 0; /* RDRAND is bit 30 of ECX */
 }
 
-extern bool truerng_is_supported(void) {
+bool truerng_is_supported(void) {
     return truerng_has_rdrand();
 }
 
-extern bool truerng_get32(uint32_t *out) {
+bool truerng_get32(uint32_t *out) {
     if (!out) return false;
     
-    for (int i = 0; i < TRUERNG_MAX_RETRIES; i++) {
-        unsigned char ok;
-        __asm__ volatile(
-            "rdrand %0; setc %1"
-            : "=r" (*out), "=qm" (ok)
-            :
-            : "cc"
-        );
-        if (ok) return true;
-    }
-    return false;
+    unsigned char ok;
+    __asm__ volatile(
+        "rdrand %0; setc %1"
+        : "=r" (*out), "=qm" (ok)
+        :
+        : "cc"
+    );
+    return ok != 0;
 }
 
-extern bool truerng_get64(uint64_t *out) {
+bool truerng_get64(uint64_t *out) {
     if (!out) return false;
     
 #if defined(__x86_64__) || defined(_M_X64)
-    for (int i = 0; i < TRUERNG_MAX_RETRIES; i++) {
-        unsigned char ok;
-        __asm__ volatile(
-            "rdrand %0; setc %1"
-            : "=r" (*out), "=qm" (ok)
-            :
-            : "cc"
-        );
-        if (ok) return true;
-    }
-    return false;
+    unsigned char ok;
+    __asm__ volatile(
+        "rdrand %0; setc %1"
+        : "=r" (*out), "=qm" (ok)
+        :
+        : "cc"
+    );
+    return ok != 0;
 #else
     /* 32-bit x86: generate two 32-bit values */
     uint32_t low, high;
@@ -157,9 +159,9 @@ extern bool truerng_get64(uint64_t *out) {
 /* ARM implementation using RNDR */
 #elif defined(TRUERNG_ARCH_ARM)
 
-extern bool truerng_is_supported(void) {
+bool truerng_is_supported(void) {
 #if defined(__aarch64__) || defined(_M_ARM64)
-    /* Check if RNDR is available by attempting to read it
+    /* Check if RNDR is available by reading ID_AA64ISAR0_EL1
      * On ARMv8.5-A+, RNDR is available if ID_AA64ISAR0_EL1.RNDR != 0 */
     uint64_t val;
     __asm__ volatile(
@@ -172,71 +174,68 @@ extern bool truerng_is_supported(void) {
 #endif
 }
 
-extern bool truerng_get32(uint32_t *out) {
+bool truerng_get32(uint32_t *out) {
     if (!out) return false;
     
 #if defined(__aarch64__) || defined(_M_ARM64)
-    for (int i = 0; i < TRUERNG_MAX_RETRIES; i++) {
-        uint64_t val;
-        uint64_t ok;
-        __asm__ volatile(
-            "mrs %0, RNDR\n\t"
-            "cset %1, ne"
-            : "=r" (val), "=r" (ok)
-            :
-            : "cc"
-        );
-        if (ok) {
-            *out = (uint32_t)val;
-            return true;
-        }
+    uint64_t val;
+    uint64_t ok;
+    __asm__ volatile(
+        "mrs %0, RNDR\n\t"
+        "cset %1, ne"
+        : "=r" (val), "=r" (ok)
+        :
+        : "cc"
+    );
+    if (ok) {
+        *out = (uint32_t)val;
+        return true;
     }
 #endif
     return false;
 }
 
-extern bool truerng_get64(uint64_t *out) {
+bool truerng_get64(uint64_t *out) {
     if (!out) return false;
     
 #if defined(__aarch64__) || defined(_M_ARM64)
-    for (int i = 0; i < TRUERNG_MAX_RETRIES; i++) {
-        uint64_t val;
-        uint64_t ok;
-        __asm__ volatile(
-            "mrs %0, RNDR\n\t"
-            "cset %1, ne"
-            : "=r" (val), "=r" (ok)
-            :
-            : "cc"
-        );
-        if (ok) {
-            *out = val;
-            return true;
-        }
+    uint64_t val;
+    uint64_t ok;
+    __asm__ volatile(
+        "mrs %0, RNDR\n\t"
+        "cset %1, ne"
+        : "=r" (val), "=r" (ok)
+        :
+        : "cc"
+    );
+    if (ok) {
+        *out = val;
+        return true;
     }
+    return false;
 #else
+    /* 32-bit ARM: generate two 32-bit values */
     uint32_t low, high;
     if (!truerng_get32(&low)) return false;
     if (!truerng_get32(&high)) return false;
     *out = ((uint64_t)high << 32) | low;
     return true;
 #endif
-    return false;
 }
 
 /* Unsupported architecture */
 #else
 
-extern bool truerng_is_supported(void) {
+bool truerng_is_supported(void) {
     return false;
 }
 
-extern bool truerng_get32(uint32_t *out) {
+bool truerng_get32(uint32_t *out) {
     (void)out;
     return false;
 }
 
-extern bool truerng_get64(uint64_t *out) {
+bool truerng_get64(uint64_t *out) {
     (void)out;
     return false;
 }
@@ -244,7 +243,7 @@ extern bool truerng_get64(uint64_t *out) {
 #endif /* Architecture selection */
 
 /* Common implementation for truerng_fill */
-extern bool truerng_fill(void *buf, size_t len) {
+bool truerng_fill(void *buf, size_t len) {
     if (!buf || len == 0) return false;
     
     uint8_t *ptr = (uint8_t *)buf;
