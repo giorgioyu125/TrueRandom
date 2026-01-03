@@ -27,15 +27,6 @@ extern "C" {
  */
 
 /* 
- * @brief Naked function attribute
- */
-#if defined(_MSC_VER)
-    #define NAKED __declspec(naked)
-#else
-    #define NAKED __attribute__((naked))
-#endif
-
-/* 
  * @brief Architecture detection
  */
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
@@ -45,6 +36,18 @@ extern "C" {
 #else
     #define truernd_ARCH_UNKNOWN 1
     #error "Unsupported architecture"
+#endif
+
+/* 
+ * @brief Naked function attribute
+ */
+#if defined(_MSC_VER)
+    #define NAKED __declspec(naked)
+#elif defined(truernd_ARCH_ARM) && (defined(__aarch64__) || defined(_M_ARM64))
+    /* ARM64 GCC doesn't support naked attribute well, use inline asm differently */
+    #define NAKED __attribute__((noinline))
+#else
+    #define NAKED __attribute__((naked))
 #endif
 
 /** \addtogroup PUBLIC API

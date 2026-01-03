@@ -1,7 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99
 LDFLAGS = 
-
 TARGET = test
 SRCS = $(wildcard *.c)
 OBJS = $(SRCS:.c=.o)
@@ -14,7 +13,11 @@ $(TARGET): $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-clean:
-	rm -f $(OBJS) $(TARGET)
+arm:
+	aarch64-linux-gnu-gcc -march=armv8-a+rng -static test.c -o test_arm64
+	qemu-aarch64-static ./test_arm64
 
-.PHONY: all clean
+clean:
+	rm -f $(OBJS) $(TARGET) test_arm64
+
+.PHONY: all arm clean
