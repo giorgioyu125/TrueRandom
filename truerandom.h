@@ -1,19 +1,19 @@
 /*
  * @file truerandom.h
  * @brief True random number generator using hardware instructions (RDRAND for x86, RNDR for ARM)
- * @version 0.0.2
+ * @version 0.0.3
  */
 
 #ifndef TRUERANDOM_H
 #define TRUERANDOM_H
 
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 
 /*
  * User Configurations
@@ -26,9 +26,6 @@ extern "C" {
 /*
  * End User Configurations
  */
-
-
-
 
 
 /* Naked function attribute */
@@ -54,11 +51,10 @@ extern "C" {
 
 /**
  * @brief Check if hardware random number generation is supported
- * @return true if supported, false otherwise
+ * @return 1 if supported, 0 if not supported
  */
-bool 
+int 
 truernd_is_supported(void);
-
 
 /**
  * @brief Generate a 32-bit true random number (single attempt)
@@ -77,7 +73,7 @@ truernd_gen64(void);
 /**
  * @brief Generate a 32-bit true random number (single attempt)
  * @param[out] out Pointer to store the random number
- * @return 0 on success, -1 on failure (caller should retry)
+ * @return 0 on success, -1 on failure
  */
 NAKED int 
 truernd_get32(uint32_t *out);
@@ -85,7 +81,7 @@ truernd_get32(uint32_t *out);
 /**
  * @brief Generate a 64-bit true random number (single attempt)
  * @param[out] out Pointer to store the random number
- * @return 0 on success, -1 on failure (caller should retry)
+ * @return 0 on success, -1 on failure
  */
 NAKED int 
 truernd_get64(uint64_t *out);
@@ -94,12 +90,10 @@ truernd_get64(uint64_t *out);
  * @brief Fill a buffer with random bytes
  * @param buf Buffer to fill
  * @param len Length of buffer in bytes
- * @return 0 on success, -1 on failure (caller should retry)
- * @note This function makes multiple calls to truernd_get64. If any call fails,
- *       the function returns false immediately. The buffer may be partially filled.
+ * @return 0 on success, -1 on failure
  */
-int 
-truernd_fill(void *buf, size_t len, bool is_32);
+static inline int 
+truernd_fill(void *buf, size_t len);
 
 /** @}*/
 
@@ -124,11 +118,11 @@ extern "C" {
 
 #include <cpuid.h>
 
-bool 
+int 
 truernd_is_supported(void) {
     uint32_t __eax, __ebx, __ecx, __edx;
     if (!__get_cpuid(1, &__eax, &__ebx, &__ecx, &__edx)) {
-        return false;
+        return 0;
     }
     return (__ecx & (1 << 30)) != 0;
 }
@@ -171,32 +165,27 @@ truernd_gen64(void) {
 /*
  * Fills a pointer with a 32-bit random number.
  * Args: out (RDI)
- * Returns: 1 (Success), 0 (HW Fail), -1 (Null Ptr)
+ * Returns: 0 (Success), -1 (Error)
  */
 NAKED int 
 truernd_get32(uint32_t *out) {
     __asm__ volatile(
         // Check if pointer (RDI) is NULL
         "test   %rdi, %rdi \n\t"
-        "jz     2f         \n\t" // Jump to NULL handler
+        "jz     1f         \n\t" // Jump to error handler
 
         // Generate Random
         "rdrand %ecx       \n\t" // Use ECX as temp
-        "jnc    1f         \n\t" // Jump to HW Fail
+        "jnc    1f         \n\t" // Jump to error if HW fails
 
         // Success Path
         "movl   %ecx, (%rdi)\n\t" // Store result to memory at [RDI]
-        "mov    $1, %eax   \n\t"  // Return 1
+        "xor    %eax, %eax \n\t"  // Return 0 (success)
         "ret               \n\t"
 
-        // HW Fail Path
+        // Error Path (both NULL and HW fail)
         "1:                \n\t"
-        "xor    %eax, %eax \n\t"  // Return 0
-        "ret               \n\t"
-
-        // Null Pointer Path
-        "2:                \n\t"
-        "mov    $-1, %eax  \n\t"  // Return -1
+        "mov    $-1, %eax  \n\t"  // Return -1 (error)
         "ret               \n\t"
     );
 }
@@ -204,14 +193,14 @@ truernd_get32(uint32_t *out) {
 /*
  * Fills a pointer with a 64-bit random number.
  * Args: out (RDI)
- * Returns: 1 (Success), 0 (HW Fail), -1 (Null Ptr)
+ * Returns: 0 (Success), -1 (Error)
  */
 NAKED int 
 truernd_get64(uint64_t *out) {
     __asm__ volatile(
         // Check if pointer (RDI) is NULL
         "test   %rdi, %rdi \n\t"
-        "jz     2f         \n\t"
+        "jz     1f         \n\t"
 
         // Generate Random (64-bit)
         "rdrand %rcx       \n\t" // Use RCX as temp
@@ -219,17 +208,12 @@ truernd_get64(uint64_t *out) {
 
         // Success Path
         "movq   %rcx, (%rdi)\n\t" // Store 64-bit result to memory
-        "mov    $1, %eax   \n\t"  // Return 1
+        "xor    %eax, %eax \n\t"  // Return 0 (success)
         "ret               \n\t"
 
-        // HW Fail Path
+        // Error Path
         "1:                \n\t"
-        "xor    %eax, %eax \n\t"  // Return 0
-        "ret               \n\t"
-
-        // Null Pointer Path
-        "2:                \n\t"
-        "mov    $-1, %eax  \n\t"  // Return -1
+        "mov    $-1, %eax  \n\t"  // Return -1 (error)
         "ret               \n\t"
     );
 }
@@ -239,12 +223,14 @@ truernd_get64(uint64_t *out) {
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 
-NAKED bool 
+NAKED int 
 truernd_is_supported(void) {
     __asm__ volatile(
-        "mrs x0, ID_AA64ISAR0_EL1 \n\t"  // Read System Register
-        "lsr x0, x0, #60          \n\t"  // Shift right by 60 bits
-        "and x0, x0, #0xF         \n\t"  // Mask last 4 bits (RNDR field)
+        "mrs x0, ID_AA64ISAR0_EL1 \n\t"
+        "lsr x0, x0, #60          \n\t"
+        "and x0, x0, #0xF         \n\t"
+        "cmp x0, #0               \n\t"  // Compare with 0
+        "cset w0, ne              \n\t"  // Set w0 to 1 if not equal
         "ret                      \n\t"
     );
 }
@@ -259,14 +245,15 @@ truernd_get32(uint32_t *out) {
         "b.eq 1f                  \n\t"  // if (NZCV.Z set) goto fail
 
         "str w1, [x0]             \n\t"  // *out = (uint32_t)val
-        "mov w0, #1               \n\t"  // return true
+        "mov w0, #0               \n\t"  // return 0 (success)
         "ret                      \n\t"
 
     "1:                           \n\t"  // fail:
-        "mov w0, #0               \n\t"  // return false
+        "mov w0, #-1              \n\t"  // return -1 (error)
         "ret                      \n\t"
     );
 }
+
 
 NAKED int 
 truernd_get64(uint64_t *out) {
@@ -278,11 +265,11 @@ truernd_get64(uint64_t *out) {
         "b.eq 1f                  \n\t"  // if (NZCV.Z set) goto fail
 
         "str x1, [x0]             \n\t"  // *out = val
-        "mov w0, #1               \n\t"  // return true
+        "mov w0, #0               \n\t"  // return 0 (success)
         "ret                      \n\t"
 
     "1:                           \n\t"  // fail:
-        "mov w0, #0               \n\t"  // return false
+        "mov w0, #-1              \n\t"  // return -1 (error)
         "ret                      \n\t"
     );
 }
@@ -290,26 +277,32 @@ truernd_get64(uint64_t *out) {
 NAKED uint32_t 
 truernd_gen32(void) {
     __asm__ volatile(
-    "1:                           \n\t"  // retry:
-        "mrs x0, RNDR             \n\t"  // Read random into return register
-        "b.eq 1b                  \n\t"  // if failed, retry
-        "ret                      \n\t"  // return (uint32_t)x0 (w0)
+        "mrs x0, RNDR             \n\t"  // Read random number
+        "b.eq 1f                  \n\t"  // If failed, jump to error path
+        "ret                      \n\t"  // Return w0 (lower 32 bits)
+        
+    "1:                           \n\t"  // fail:
+        "mov w0, #0               \n\t"  // Return 0 on failure
+        "ret                      \n\t"
     );
 }
 
 NAKED uint64_t 
 truernd_gen64(void) {
     __asm__ volatile(
-    "1:                           \n\t"  // retry:
-        "mrs x0, RNDR             \n\t"  // Read random into return register
-        "b.eq 1b                  \n\t"  // if failed, retry
-        "ret                      \n\t"  // return x0
+        "mrs x0, RNDR             \n\t"  // Read random number
+        "b.eq 1f                  \n\t"  // If failed, jump to error path
+        "ret                      \n\t"  // Return x0
+        
+    "1:                           \n\t"  // fail:
+        "mov x0, #0               \n\t"  // Return 0 on failure
+        "ret                      \n\t"
     );
 }
 
 #else /* 32-bit ARM - RNDR not available */
 
-NAKED bool 
+NAKED int 
 truernd_is_supported(void) {
     __asm__ volatile(
         "mov r0, #0               \n\t"  // Return 0 (not supported)
@@ -320,7 +313,7 @@ truernd_is_supported(void) {
 NAKED int 
 truernd_get32(uint32_t *out) {
     __asm__ volatile(
-        "mov r0, #0               \n\t"  // Return false
+        "mov r0, #-1              \n\t"  // Return -1 (error)
         "bx lr                    \n\t"
     );
 }
@@ -328,7 +321,7 @@ truernd_get32(uint32_t *out) {
 NAKED int 
 truernd_get64(uint64_t *out) {
     __asm__ volatile(
-        "mov r0, #0               \n\t"  // Return false
+        "mov r0, #-1              \n\t"  // Return -1 (error)
         "bx lr                    \n\t"
     );
 }
@@ -355,21 +348,21 @@ truernd_gen64(void) {
 /* Unsupported architecture */
 #else
 
-bool 
+int 
 truernd_is_supported(void) {
-    return false;
+    return 0;
 }
 
-bool 
+int 
 truernd_get32(uint32_t *out) {
     (void)out;
-    return false;
+    return -1;
 }
 
-bool 
+int 
 truernd_get64(uint64_t *out) {
     (void)out;
-    return false;
+    return -1;
 }
 
 uint32_t 
@@ -385,8 +378,15 @@ truernd_gen64(void) {
 #endif /* Architecture selection */
 
 /* Common implementation for truernd_fill */
-int 
-truernd_fill(void *buf, size_t len, bool is_32) {
+/**
+ * @brief Fill a buffer with random bytes
+ * @param buf Buffer to fill
+ * @param len Length of buffer in bytes
+ * @return 0 on success, -1 on failure
+ * @note Assumes little-endian byte order for byte extraction from 64-bit values
+ */
+static inline int 
+truernd_fill(void *buf, size_t len) {
     if (!buf || len == 0) return -1;
 
     uint8_t *ptr = (uint8_t *)buf;
@@ -394,7 +394,10 @@ truernd_fill(void *buf, size_t len, bool is_32) {
     /* Fill in 64-bit chunks */
     while (len >= 8) {
         uint64_t val;
-        if (!truernd_get64(&val)) return -1;
+        int retries = 0;
+        while (truernd_get64(&val) != 0) {
+            if (++retries >= TRUERND_MAX_RETRIES) return -1;
+        }
         for (int i = 0; i < 8; i++) {
             *ptr++ = (uint8_t)(val >> (i * 8));
         }
@@ -404,7 +407,10 @@ truernd_fill(void *buf, size_t len, bool is_32) {
     /* Fill remaining bytes */
     if (len > 0) {
         uint64_t val;
-        if (!truernd_get64(&val)) return -1;
+        int retries = 0;
+        while (truernd_get64(&val) != 0) {
+            if (++retries >= TRUERND_MAX_RETRIES) return -1;
+        }
         for (size_t i = 0; i < len; i++) {
             *ptr++ = (uint8_t)(val >> (i * 8));
         }
@@ -412,7 +418,6 @@ truernd_fill(void *buf, size_t len, bool is_32) {
 
     return 0;
 }
-
 #ifdef __cplusplus
 }
 #endif
