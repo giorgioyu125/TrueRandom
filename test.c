@@ -10,7 +10,7 @@
 #include <string.h>
 #include <time.h>
 
-#define TEST_ITERATIONS 1000
+#define TEST_ITERATIONS 1000000
 #define BUFFER_SIZE 256
 
 #define ANSI_RESET    "\033[0m"
@@ -331,7 +331,6 @@ static int test_gen_functions(void) {
     print_header("TEST 8: Gen32/Gen64 Functions");
 
     printf("Testing truernd_gen32() and truernd_gen64()...\n");
-    printf(ANSI_DIM "Note: These functions retry on failure, so they should always succeed\n" ANSI_RESET);
 
     printf("\nGenerating 5 random 32-bit values with truernd_gen32():\n");
     for (int i = 0; i < 5; i++) {
