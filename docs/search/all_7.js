@@ -1,7 +1,7 @@
 var searchData=
 [
   ['test_2ec_0',['test.c',['../test_8c.html',1,'']]],
-  ['truerandom_20h_1',['truerandom.h',['../md_README.html',1,'']]],
+  ['truerandom_20h_1',['truerandom.h',['../index.html',1,'']]],
   ['truernd_5fgen32_2',['truernd_gen32',['../group__PUBLIC.html#ga4e97b314dda3a90496bee104efaaaec7',1,'truerandom.h']]],
   ['truernd_5fgen64_3',['truernd_gen64',['../group__PUBLIC.html#ga4c8bc259c67bf335648676dc1be678e2',1,'truerandom.h']]],
   ['truernd_5fget32_4',['truernd_get32',['../group__PUBLIC.html#ga6bb10b97c370243152974995001bfb81',1,'truerandom.h']]],

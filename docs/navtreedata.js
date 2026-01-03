@@ -25,13 +25,7 @@
 var NAVTREE =
 [
   [ "TrueRandom", "index.html", [
-    [ "truerandom.h", "md_README.html", [
-      [ "Usage", "md_README.html#autotoc_md1", null ],
-      [ "API", "md_README.html#autotoc_md2", null ],
-      [ "Configuration", "md_README.html#autotoc_md3", null ],
-      [ "Platform Support", "md_README.html#autotoc_md4", null ],
-      [ "License", "md_README.html#autotoc_md5", null ]
-    ] ],
+    [ "truerandom.h", "index.html", "index" ],
     [ "Topics", "topics.html", "topics" ],
     [ "Files", "files.html", [
       [ "File List", "files.html", "files_dup" ],

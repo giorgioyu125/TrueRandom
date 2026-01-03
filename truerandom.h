@@ -14,7 +14,6 @@
 extern "C" {
 #endif
 
-
 /*
  * User Configurations
  */
@@ -27,15 +26,18 @@ extern "C" {
  * End User Configurations
  */
 
-
-/* Naked function attribute */
+/* 
+ * @brief Naked function attribute
+ */
 #if defined(_MSC_VER)
     #define NAKED __declspec(naked)
 #else
     #define NAKED __attribute__((naked))
 #endif
 
-/* Architecture detection */
+/* 
+ * @brief Architecture detection
+ */
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
     #define truernd_ARCH_X86 1
 #elif defined(__aarch64__) || defined(_M_ARM64) || defined(__arm__) || defined(_M_ARM)
